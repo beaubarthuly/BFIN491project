@@ -1,0 +1,28 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# Jupyter/runtime
+.jupyter/
+
+# OS/editor
+.vscode/
+.idea/
+
+# Temporary Excel files
+~$*.xlsx
+
+# Build/runtime output folders (reproducible artifacts)
+outputs/
+
+# Local secrets/config
+.env
+.env.*
+
