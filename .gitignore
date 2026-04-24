@@ -19,6 +19,9 @@ env/
 # Temporary Excel files
 ~$*.xlsx
 
+# Raw price downloads (large, regenerated each run)
+data/raw/
+
 # Build/runtime output folders (reproducible artifacts)
 outputs/
 
