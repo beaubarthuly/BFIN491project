@@ -16,6 +16,57 @@ from utils.data_utils import (
 )
 
 
+def _recession_bands(
+    chart_start: pd.Timestamp,
+    chart_end: pd.Timestamp,
+    usrec_path: "str | Path | None" = None,
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """
+    Return (start, end) date pairs for NBER recession periods that overlap
+    with [chart_start, chart_end], sourced from a FRED USREC CSV.
+    Falls back to the known COVID recession if the file is unavailable.
+    """
+    from pathlib import Path as _Path
+    if usrec_path is None:
+        # Resolve relative to this file's project root
+        usrec_path = _Path(__file__).resolve().parent.parent / "data" / "fred_usrec.csv"
+    p = _Path(str(usrec_path))
+
+    if p.exists():
+        df = pd.read_csv(p)
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["usrec"] = pd.to_numeric(df["usrec"], errors="coerce")
+        df = df.dropna().sort_values("date").reset_index(drop=True)
+    else:
+        # Fallback: just the COVID recession
+        df = pd.DataFrame({
+            "date": pd.date_range("2020-03-01", "2020-04-01", freq="MS"),
+            "usrec": [1, 1],
+        })
+
+    # Convert consecutive recession months into (start, end) bands
+    bands: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    in_rec = False
+    band_start: pd.Timestamp | None = None
+    for _, row in df.iterrows():
+        if row["usrec"] == 1 and not in_rec:
+            in_rec = True
+            band_start = row["date"]
+        elif row["usrec"] != 1 and in_rec:
+            in_rec = False
+            # End of band = start of first non-recession month
+            bands.append((band_start, row["date"]))
+    if in_rec and band_start is not None:
+        bands.append((band_start, df["date"].iloc[-1]))
+
+    # Filter to bands that overlap with the chart window
+    return [
+        (max(s, chart_start), min(e, chart_end))
+        for s, e in bands
+        if s <= chart_end and e >= chart_start
+    ]
+
+
 def _first_nonblank_text(*values: Any) -> str:
     for value in values:
         text = normalize_text(value)
@@ -999,9 +1050,10 @@ def plot_revised_active_weights(weights_daily: pd.DataFrame) -> None:
     ax.set_title("Revised Active Fund Weight Evolution")
     ax.set_xlabel("Date")
     ax.set_ylabel("Weight")
-    ax.legend(ncol=2, fontsize=8)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=5, fontsize=8)
     ax.grid(alpha=0.25)
     fig.autofmt_xdate()
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
 
 
 def plot_legacy_static_active_vs_benchmark(compare_df: pd.DataFrame, benchmark_ticker: str) -> None:
@@ -1022,6 +1074,13 @@ def plot_legacy_static_active_vs_benchmark(compare_df: pd.DataFrame, benchmark_t
         ax.plot(date_col, compare_df["revised_active_growth_of_1"], label="Revised Active Fund", linewidth=1.7)
     if "benchmark_growth_of_1" in compare_df.columns:
         ax.plot(date_col, compare_df["benchmark_growth_of_1"], label=normalize_text(benchmark_ticker).upper(), linewidth=1.4)
+    chart_start = pd.to_datetime(compare_df["date"].min())
+    chart_end   = pd.to_datetime(compare_df["date"].max())
+    rec_label_added = False
+    for rec_start, rec_end in _recession_bands(chart_start, chart_end):
+        ax.axvspan(rec_start, rec_end, alpha=0.15, color="grey",
+                   label="NBER Recession" if not rec_label_added else "_nolegend_")
+        rec_label_added = True
     ax.set_title("Legacy vs Revised Static vs Revised Active vs Benchmark")
     ax.set_xlabel("Date")
     ax.set_ylabel("Growth of $1")

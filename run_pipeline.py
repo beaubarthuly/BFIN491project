@@ -63,9 +63,12 @@ from utils.portfolio_utils import (
 )
 from utils.factor_utils import (
     build_capm_summary,
+    build_ff3_summary,
     build_portfolio_return_panel,
     build_rolling_beta_table,
+    load_ff3_factors,
     plot_factor_alpha_beta,
+    plot_ff3_exposures,
     plot_rolling_beta,
 )
 from utils.risk_utils import (
@@ -777,6 +780,7 @@ def main() -> int:
         active_backtest_compare = pd.DataFrame()
         factor_capm_summary = pd.DataFrame()
         factor_rolling_beta = pd.DataFrame()
+        factor_ff3_summary = pd.DataFrame()
         scenario_result = None
         if revised_static_info["ready"]:
             static_result = construct_revised_static_fund(
@@ -899,6 +903,15 @@ def main() -> int:
             benchmark_col="benchmark_return",
             window=63,
         )
+
+        ff3_path = paths.project_root / "data" / "ff3_factors_daily.csv"
+        ff3_factors = load_ff3_factors(ff3_path, oos_start=oos_start, oos_end=oos_end)
+        if not ff3_factors.empty:
+            factor_ff3_summary = build_ff3_summary(
+                return_panel=factor_return_panel,
+                ff3_factors=ff3_factors,
+                benchmark_col="benchmark_return",
+            )
 
         if not factor_capm_summary.empty:
             ready_portfolios = ", ".join(factor_capm_summary["portfolio"].astype(str).tolist())
@@ -1118,6 +1131,11 @@ def main() -> int:
                 )
             )
 
+        if not factor_ff3_summary.empty:
+            saved_paths.append(
+                save_table(factor_ff3_summary, paths.tables_dir / "tbl_factor_ff3_summary.csv", logger)
+            )
+
         # Scenario / stress exports
         if scenario_result is not None:
             saved_paths.append(
@@ -1195,11 +1213,14 @@ def main() -> int:
         plot_rolling_beta(factor_rolling_beta)
         saved_paths.append(save_figure(paths.figures_dir / "fig_factor_rolling_beta.png", logger))
 
+        plot_ff3_exposures(factor_ff3_summary)
+        saved_paths.append(save_figure(paths.figures_dir / "fig_factor_ff3.png", logger))
+
         if scenario_result is not None:
             plot_monte_carlo_distribution(scenario_result["simulation_draws"])
             saved_paths.append(save_figure(paths.figures_dir / "fig_scenario_monte_carlo_distribution.png", logger))
 
-            plot_stress_scenarios(scenario_result["stress_summary"])
+            plot_stress_scenarios(scenario_result["stress_summary"], legacy_daily=legacy["fund_daily"])
             saved_paths.append(save_figure(paths.figures_dir / "fig_scenario_stress_impacts.png", logger))
         else:
             # Still generate placeholder figures so the dashboard page remains stable.

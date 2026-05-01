@@ -282,6 +282,166 @@ def plot_factor_alpha_beta(capm_summary: pd.DataFrame) -> None:
     ax.grid(alpha=0.25)
 
 
+# ---------------------------------------------------------------------------
+# Fama-French 3-Factor functions
+# ---------------------------------------------------------------------------
+
+def load_ff3_factors(
+    ff3_path: "str | Path",
+    oos_start: pd.Timestamp,
+    oos_end: pd.Timestamp,
+) -> pd.DataFrame:
+    """Load saved FF3 daily factors CSV and trim to the OOS window."""
+    from pathlib import Path
+    p = Path(str(ff3_path))
+    if not p.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(p)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for c in ["mkt_rf", "smb", "hml", "rf"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna(subset=["date"]).set_index("date").sort_index()
+    return df.loc[(df.index >= oos_start) & (df.index <= oos_end)].copy()
+
+
+def run_ff3_regression(
+    portfolio_returns: pd.Series,
+    ff3_factors: pd.DataFrame,
+    portfolio_name: str,
+) -> dict[str, Any]:
+    """OLS regression of excess portfolio returns on Mkt-RF, SMB, HML."""
+    required = {"mkt_rf", "smb", "hml", "rf"}
+    if ff3_factors.empty or not required.issubset(ff3_factors.columns):
+        return {"portfolio": portfolio_name, "notes": "FF3 factor data unavailable."}
+
+    port = pd.to_numeric(portfolio_returns, errors="coerce").rename("portfolio")
+    aligned = pd.concat([port, ff3_factors[["mkt_rf", "smb", "hml", "rf"]]], axis=1, join="inner").dropna()
+
+    if len(aligned) < 20:
+        return {
+            "portfolio": portfolio_name,
+            "n_obs": len(aligned),
+            "alpha_daily": np.nan,
+            "alpha_ann": np.nan,
+            "alpha_tstat": np.nan,
+            "alpha_pvalue": np.nan,
+            "beta_mkt": np.nan,
+            "beta_smb": np.nan,
+            "beta_hml": np.nan,
+            "r_squared": np.nan,
+            "notes": "Insufficient observations.",
+        }
+
+    y = aligned["portfolio"] - aligned["rf"]
+    X_vals = aligned[["mkt_rf", "smb", "hml"]].values
+
+    if sm is not None:
+        X = sm.add_constant(X_vals, has_constant="add")
+        model = sm.OLS(y.values, X).fit()
+        alpha_d   = float(model.params[0])
+        beta_mkt  = float(model.params[1])
+        beta_smb  = float(model.params[2])
+        beta_hml  = float(model.params[3])
+        a_tstat   = float(model.tvalues[0])
+        a_pvalue  = float(model.pvalues[0])
+        r2        = float(model.rsquared)
+    else:
+        # Fallback: numpy lstsq
+        X = np.column_stack([np.ones(len(X_vals)), X_vals])
+        params, *_ = np.linalg.lstsq(X, y.values, rcond=None)
+        alpha_d, beta_mkt, beta_smb, beta_hml = params
+        resid = y.values - X @ params
+        n, k = len(y), X.shape[1]
+        sse = float((resid**2).sum())
+        sst = float(((y.values - y.values.mean())**2).sum())
+        r2 = 1.0 - sse / sst if sst > 0 else np.nan
+        sigma2 = sse / (n - k) if n > k else np.nan
+        try:
+            se = np.sqrt(np.diag(sigma2 * np.linalg.inv(X.T @ X)))
+            a_tstat = float(params[0] / se[0])
+        except Exception:
+            a_tstat = np.nan
+        a_pvalue = np.nan
+
+    return {
+        "portfolio":    portfolio_name,
+        "n_obs":        len(aligned),
+        "alpha_daily":  float(alpha_d),
+        "alpha_ann":    float(alpha_d) * 252.0,
+        "alpha_tstat":  float(a_tstat),
+        "alpha_pvalue": float(a_pvalue) if not np.isnan(a_pvalue) else np.nan,
+        "beta_mkt":     float(beta_mkt),
+        "beta_smb":     float(beta_smb),
+        "beta_hml":     float(beta_hml),
+        "r_squared":    float(r2),
+        "notes":        "FF3 OLS: Ri - Rf = alpha + beta_mkt*(Rmkt-Rf) + beta_smb*SMB + beta_hml*HML",
+    }
+
+
+def build_ff3_summary(
+    return_panel: pd.DataFrame,
+    ff3_factors: pd.DataFrame,
+    benchmark_col: str = "benchmark_return",
+) -> pd.DataFrame:
+    if return_panel.empty or ff3_factors.empty:
+        return pd.DataFrame()
+    rows = []
+    for col in [c for c in return_panel.columns if c != benchmark_col]:
+        label = PORTFOLIO_LABELS.get(col, normalize_text(col))
+        rows.append(run_ff3_regression(return_panel[col], ff3_factors, label))
+    return pd.DataFrame(rows)
+
+
+def plot_ff3_exposures(ff3_summary: pd.DataFrame) -> None:
+    """Grouped bar chart: Mkt-RF, SMB, HML betas per portfolio, plus alpha annotation."""
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+
+    if ff3_summary.empty or "beta_mkt" not in ff3_summary.columns:
+        for ax in axes:
+            ax.text(0.5, 0.5, "FF3 outputs not available.", ha="center", va="center")
+            ax.set_axis_off()
+        return
+
+    df = ff3_summary.dropna(subset=["beta_mkt", "beta_smb", "beta_hml"]).copy()
+    portfolios = df["portfolio"].tolist()
+    x = np.arange(len(portfolios))
+    width = 0.25
+
+    ax1 = axes[0]
+    ax1.bar(x - width,  df["beta_mkt"].values, width, label="Mkt-RF (Market)", color="#1f77b4")
+    ax1.bar(x,          df["beta_smb"].values, width, label="SMB (Size)",       color="#ff7f0e")
+    ax1.bar(x + width,  df["beta_hml"].values, width, label="HML (Value)",      color="#2ca02c")
+    ax1.axhline(0.0, color="black", linewidth=0.8)
+    ax1.set_title("FF3 Factor Loadings")
+    ax1.set_ylabel("Factor beta")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels([p.replace(" Fund", "\nFund") for p in portfolios], fontsize=8)
+    ax1.legend(fontsize=8)
+    ax1.grid(axis="y", alpha=0.25)
+
+    ax2 = axes[1]
+    alpha_vals = df["alpha_ann"].values
+    colors = ["#3fb950" if v >= 0 else "#f85149" for v in alpha_vals]
+    bars = ax2.bar(x, alpha_vals, 0.5, color=colors)
+    for bar, tstat in zip(bars, df["alpha_tstat"].fillna(0).values):
+        sig = "**" if abs(tstat) > 2 else ("*" if abs(tstat) > 1.65 else "")
+        if sig:
+            ax2.text(bar.get_x() + bar.get_width() / 2,
+                     bar.get_height() + (0.002 if bar.get_height() >= 0 else -0.008),
+                     sig, ha="center", va="bottom", fontsize=10)
+    ax2.axhline(0.0, color="black", linewidth=0.8)
+    ax2.set_title("FF3 Annualized Alpha")
+    ax2.set_ylabel("Annualized alpha")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels([p.replace(" Fund", "\nFund") for p in portfolios], fontsize=8)
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1%}"))
+    ax2.grid(axis="y", alpha=0.25)
+
+    fig.suptitle("Fama-French 3-Factor Analysis (OOS: 2020–2025)", fontsize=12, fontweight="bold")
+    fig.tight_layout()
+
+
 def plot_rolling_beta(rolling_beta_df: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
     if rolling_beta_df.empty:

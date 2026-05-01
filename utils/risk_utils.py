@@ -336,8 +336,58 @@ def plot_monte_carlo_distribution(simulation_draws: pd.DataFrame) -> None:
     ax.grid(alpha=0.25)
 
 
-def plot_stress_scenarios(stress_summary: pd.DataFrame) -> None:
-    fig, ax = plt.subplots(figsize=(10, 5))
+def _compute_legacy_stress_impacts(
+    stress_summary: pd.DataFrame,
+    legacy_daily: pd.DataFrame,
+) -> pd.Series:
+    """Return a Series of Legacy Fund returns aligned to each stress scenario row."""
+    if legacy_daily.empty or "date" not in legacy_daily.columns or "legacy_fund_return" not in legacy_daily.columns:
+        return pd.Series([np.nan] * len(stress_summary))
+
+    ld = legacy_daily.copy()
+    ld["date"] = pd.to_datetime(ld["date"], errors="coerce")
+    ld = ld.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    oos = ld[ld["date"] >= "2020-01-01"].reset_index(drop=True)
+
+    results = []
+    for _, row in stress_summary.iterrows():
+        stype = str(row.get("scenario_type", "")).strip()
+        sdate = row.get("scenario_date", "")
+
+        if stype == "synthetic":
+            # Parallel shock — same magnitude applies to legacy
+            results.append(pd.to_numeric(row.get("benchmark_return", np.nan), errors="coerce"))
+            continue
+
+        if not sdate:
+            results.append(np.nan)
+            continue
+
+        target = pd.Timestamp(str(sdate).strip())
+
+        if stype == "historical":
+            match = oos[oos["date"] == target]
+            results.append(float(match.iloc[0]["legacy_fund_return"]) if not match.empty else np.nan)
+        elif stype == "historical_window":
+            idx_list = oos.index[oos["date"] == target].tolist()
+            if not idx_list:
+                results.append(np.nan)
+                continue
+            end_idx = idx_list[0]
+            start_idx = max(0, end_idx - 20)
+            window = oos.iloc[start_idx : end_idx + 1]
+            results.append(float((1 + window["legacy_fund_return"]).prod() - 1))
+        else:
+            results.append(np.nan)
+
+    return pd.Series(results, index=stress_summary.index)
+
+
+def plot_stress_scenarios(
+    stress_summary: pd.DataFrame,
+    legacy_daily: "pd.DataFrame | None" = None,
+) -> None:
+    fig, ax = plt.subplots(figsize=(12, 5))
     if stress_summary.empty:
         ax.text(0.5, 0.5, "Stress-scenario outputs are not ready yet.", ha="center", va="center")
         ax.set_axis_off()
@@ -346,18 +396,31 @@ def plot_stress_scenarios(stress_summary: pd.DataFrame) -> None:
     chart = stress_summary.copy()
     labels = chart["scenario"].map(normalize_text).tolist()
     x = np.arange(len(chart))
-    width = 0.35
+    width = 0.20
 
-    static_vals = pd.to_numeric(chart.get("static_portfolio_impact", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
-    active_vals = pd.to_numeric(chart.get("active_portfolio_impact", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+    benchmark_vals = pd.to_numeric(chart.get("benchmark_return", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+    static_vals    = pd.to_numeric(chart.get("static_portfolio_impact", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+    active_vals    = pd.to_numeric(chart.get("active_portfolio_impact", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
 
-    ax.bar(x - width / 2, static_vals, width, label="Revised Static Fund")
-    ax.bar(x + width / 2, active_vals, width, label="Revised Active Fund")
+    if legacy_daily is not None and not legacy_daily.empty:
+        legacy_vals = _compute_legacy_stress_impacts(chart, legacy_daily).fillna(0.0)
+    else:
+        legacy_vals = chart.get("legacy_fund_impact", pd.Series([np.nan] * len(chart)))
+        legacy_vals = pd.to_numeric(legacy_vals, errors="coerce").fillna(0.0)
+
+    offsets = [-1.5 * width, -0.5 * width, 0.5 * width, 1.5 * width]
+    ax.bar(x + offsets[0], legacy_vals,    width, label="Legacy Fund",         color="#9467bd")
+    ax.bar(x + offsets[1], benchmark_vals, width, label="SPY (Benchmark)",     color="#7f7f7f")
+    ax.bar(x + offsets[2], static_vals,    width, label="Revised Static Fund", color="#1f77b4")
+    ax.bar(x + offsets[3], active_vals,    width, label="Revised Active Fund", color="#ff7f0e")
+
     ax.axhline(0.0, color="black", linewidth=0.8)
     ax.set_title("Portfolio Impacts Under Stress Scenarios")
     ax.set_xlabel("Scenario")
     ax.set_ylabel("Portfolio return impact")
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=25, ha="right")
-    ax.legend()
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.legend(loc="lower right")
     ax.grid(axis="y", alpha=0.25)
+    fig.tight_layout()
