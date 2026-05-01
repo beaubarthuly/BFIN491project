@@ -401,6 +401,10 @@ def render_backtest_comparison(payload: dict[str, pd.DataFrame | dict[str, str]]
         chart_df = chart_source.copy()
         chart_df["date"] = pd.to_datetime(chart_df["date"], errors="coerce")
         chart_df = chart_df.dropna(subset=["date"]).set_index("date")
+        if "legacy_growth_of_1_oos" in chart_df.columns:
+            first = chart_df["legacy_growth_of_1_oos"].iloc[0]
+            if first and first != 0:
+                chart_df["legacy_growth_of_1_oos"] = chart_df["legacy_growth_of_1_oos"] / first
         chart_cols = [
             c
             for c in [

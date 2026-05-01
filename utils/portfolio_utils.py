@@ -504,7 +504,9 @@ def plot_legacy_static_vs_benchmark(compare_df: pd.DataFrame, benchmark_ticker: 
 
     date_col = pd.to_datetime(compare_df["date"], errors="coerce")
     if "legacy_growth_of_1_oos" in compare_df.columns:
-        ax.plot(date_col, compare_df["legacy_growth_of_1_oos"], label="Legacy Fund", linewidth=1.7)
+        legacy_series = compare_df["legacy_growth_of_1_oos"]
+        legacy_series = legacy_series / legacy_series.iloc[0]
+        ax.plot(date_col, legacy_series, label="Legacy Fund", linewidth=1.7)
     if "revised_static_growth_of_1" in compare_df.columns:
         ax.plot(date_col, compare_df["revised_static_growth_of_1"], label="Revised Static Fund", linewidth=1.7)
     if "benchmark_growth_of_1" in compare_df.columns:
@@ -1011,7 +1013,9 @@ def plot_legacy_static_active_vs_benchmark(compare_df: pd.DataFrame, benchmark_t
 
     date_col = pd.to_datetime(compare_df["date"], errors="coerce")
     if "legacy_growth_of_1_oos" in compare_df.columns:
-        ax.plot(date_col, compare_df["legacy_growth_of_1_oos"], label="Legacy Fund", linewidth=1.7)
+        legacy_series = compare_df["legacy_growth_of_1_oos"]
+        legacy_series = legacy_series / legacy_series.iloc[0]
+        ax.plot(date_col, legacy_series, label="Legacy Fund", linewidth=1.7)
     if "revised_static_growth_of_1" in compare_df.columns:
         ax.plot(date_col, compare_df["revised_static_growth_of_1"], label="Revised Static Fund", linewidth=1.7)
     if "revised_active_growth_of_1" in compare_df.columns:
