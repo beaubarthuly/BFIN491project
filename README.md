@@ -1,306 +1,160 @@
-# Capstone Starter Pack: Fund Management Dashboard Capstone
+# BlackFin Inc. — BFIN 491 Capstone Project
 
-This starter pack is the release-ready foundation for **Handout 04: Fund Management Dashboard Capstone**.
+**Team:** Beau Barthuly · Bailey Binando · Kjellen Bogard  
+**Showcase:** May 4, 2026 — 102 Jabs Hall
 
-The project is built around one case:
-- You inherit a 10-stock equity fund that starts on **2010-01-01** with **$1,000,000**
-- Your manager takeover date is **2020-01-01**
-- You may use only information available through **2019-12-31** to redesign the fund
-- You evaluate results out of sample from **2020-01-01** through **2025-12-31**
+---
 
-The intended workflow is:
+## Environment Setup
 
-**Excel inputs → Python pipeline → saved outputs → dashboard display**
+**Always use this venv — do NOT use the one inside the Desktop/BFIN_491 folder (it is iCloud-synced and freezes on import):**
 
-## What is included
-
-- `fund_manager_control.xlsx` — control workbook for inputs, candidate research, constraints, and summary outputs
-- `run_pipeline.py` — main analytics pipeline
-- `dashboard_app.py` — Streamlit dashboard
-- `utils/` — helper modules for data, portfolio, factor, and risk logic
-- `notebooks/capstone_report.ipynb` — narrative notebook shell
-- `report/final_report_template.md` — formal report outline
-- `slides/final_presentation_outline.md` — slide-by-slide presentation outline
-- `MILESTONE_BUILD_GUIDE.md` — step-by-step build guide for Milestones 1, 2, and 3
-
-## Expected folder structure
-
-```text
-Capstone_Starter_Pack_Release/
-    dashboard_app.py
-    run_pipeline.py
-    README.md
-    QUICKSTART.md
-    MILESTONE_BUILD_GUIDE.md
-    fund_manager_control.xlsx
-    notebooks/
-        capstone_report.ipynb
-    utils/
-        data_utils.py
-        portfolio_utils.py
-        factor_utils.py
-        risk_utils.py
-        dashboard_utils.py
-    data/
-        raw/
-        clean/
-    outputs/
-        figures/
-        tables/
-        logs/
-    report/
-        final_report_template.md
-    slides/
-        final_presentation_outline.md
-```
-
-## Before you start
-
-Use the **shared course virtual environment** created at the course root (for example `Desktop/BFIN491/.venv`), not a random environment from another folder.
-
-Typical workflow:
-
-### macOS / Linux
 ```bash
-cd ~/Desktop/BFIN491
-source .venv/bin/activate
-cd Capstone_Starter_Pack_Release
+source ~/bfin_capstone_venv/bin/activate
 ```
 
-### Windows PowerShell
-```powershell
-cd ~/Desktop/BFIN491
-.\.venv\Scripts\activate
-cd Capstone_Starter_Pack_Release
-```
+---
 
-If you are missing packages, reinstall them **inside the shared course environment**.
+## Running the Full Pipeline
 
-Core packages used by the starter pack:
-- pandas
-- numpy
-- yfinance
-- matplotlib
-- streamlit
-- openpyxl
+This regenerates all tables, figures, and outputs from scratch (downloads fresh price data):
 
-## First run: 5-step startup
-
-### 1. Open the Excel workbook
-Open `fund_manager_control.xlsx`.
-
-At minimum, review these sheets:
-- `Inputs`
-- `InheritedFund`
-- `Candidates`
-- `Constraints`
-- `Outputs`
-- `Notes_Manifest`
-
-### 2. Fill in the workbook carefully
-Starter-pack expectations:
-- the inherited fund is already prefilled
-- candidate rows are for your **5–10 new ideas**
-- the revised fund must contain **exactly 10 stocks**
-- if you select final names but leave static weights blank, the starter pipeline may fall back to equal weights and warn you
-
-### 3. Run the pipeline
 ```bash
+source ~/bfin_capstone_venv/bin/activate
 python run_pipeline.py
 ```
 
-Optional:
+To skip the Yahoo Finance download and use cached price data (much faster, use this normally):
+
 ```bash
 python run_pipeline.py --no-download
 ```
-Use `--no-download` only if you already have a cached clean price panel in `data/clean/prices_adjclose_daily.csv`.
 
-### 4. Launch the dashboard
+The pipeline produces everything in `outputs/tables/` and `outputs/figures/`. After running, the dashboard will automatically reflect the new outputs — no dashboard restart needed if it is already running.
+
+---
+
+## Regenerating Individual Figures (without re-running the full pipeline)
+
+If you only need to update specific figures without touching the pipeline, run these standalone scripts from the project root:
+
+**All key figures at once:**
 ```bash
+source ~/bfin_capstone_venv/bin/activate
+python - <<'EOF'
+import sys; sys.path.insert(0, ".")
+import matplotlib; matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import pandas as pd
+from pathlib import Path
+from utils.portfolio_utils import plot_legacy_static_active_vs_benchmark, plot_revised_active_weights
+from utils.risk_utils import plot_stress_scenarios
+from utils.factor_utils import load_ff3_factors, build_ff3_summary, plot_ff3_exposures, build_portfolio_return_panel
+
+T = Path("outputs/tables")
+F = Path("outputs/figures")
+
+# Main return chart (with NBER recession shading)
+compare = pd.read_csv(T / "tbl_backtest_legacy_static_active_benchmark.csv")
+plot_legacy_static_active_vs_benchmark(compare, benchmark_ticker="SPY")
+plt.savefig(F / "fig_legacy_static_active_benchmark.png", dpi=150, bbox_inches="tight"); plt.close()
+
+# Active weights chart (legend below chart)
+weights = pd.read_csv(T / "tbl_revised_active_weights_daily.csv")
+plot_revised_active_weights(weights)
+plt.savefig(F / "fig_revised_active_weights.png", dpi=150, bbox_inches="tight"); plt.close()
+
+# Stress chart (all 4 portfolios)
+stress = pd.read_csv(T / "tbl_scenario_stress_summary.csv")
+legacy = pd.read_csv(T / "tbl_legacy_fund_daily.csv")
+plot_stress_scenarios(stress, legacy_daily=legacy)
+plt.savefig(F / "fig_scenario_stress_impacts.png", dpi=150, bbox_inches="tight"); plt.close()
+
+# FF3 figure
+panel = build_portfolio_return_panel(
+    pd.read_csv(T/"tbl_legacy_fund_daily.csv"), pd.read_csv(T/"tbl_revised_static_daily.csv"),
+    pd.read_csv(T/"tbl_revised_active_daily.csv"), pd.read_csv(T/"tbl_benchmark_daily.csv"),
+    pd.Timestamp("2020-01-01"), pd.Timestamp("2025-12-31"),
+)
+ff3 = load_ff3_factors("data/ff3_factors_daily.csv", pd.Timestamp("2020-01-01"), pd.Timestamp("2025-12-31"))
+summary = build_ff3_summary(panel, ff3)
+summary.to_csv(T / "tbl_factor_ff3_summary.csv", index=False)
+plot_ff3_exposures(summary)
+plt.savefig(F / "fig_factor_ff3.png", dpi=150, bbox_inches="tight"); plt.close()
+
+print("All figures regenerated.")
+EOF
+```
+
+---
+
+## Launching the Dashboard
+
+```bash
+source ~/bfin_capstone_venv/bin/activate
 streamlit run dashboard_app.py
 ```
 
-### 5. Review generated outputs
-Check:
-- `outputs/tables/`
-- `outputs/figures/`
-- `fund_manager_control.xlsx` → `Outputs` sheet
-- `fund_manager_control.xlsx` → `Notes_Manifest` sheet
+Opens at `http://localhost:8501`. The dashboard reads live from `outputs/tables/` and `outputs/figures/` — re-running the pipeline updates it automatically without restarting.
 
-## What the starter pack gives you
+---
 
-This starter pack already includes a working analytics foundation. You are **not** expected to rewrite the project from scratch.
+## Key Files
 
-The codebase already supports:
-- price download and data preparation
-- inherited-fund reconstruction
-- candidate-screen exports
-- revised static and revised active portfolio layers
-- factor / regression outputs
-- scenario / stress outputs
-- dashboard structure
-- notebook, report, and presentation scaffolds
+| File | Purpose |
+|------|---------|
+| `run_pipeline.py` | Master pipeline — runs all layers end to end |
+| `dashboard_app.py` | Streamlit dashboard (8 pages) |
+| `data/ff3_factors_daily.csv` | Fama-French 3-factor daily data (downloaded from FRED, covers 1926–2026) |
+| `data/fred_usrec.csv` | NBER recession indicator (from FRED USREC, used for grey shading on charts) |
+| `utils/factor_utils.py` | CAPM + FF3 regression functions |
+| `utils/portfolio_utils.py` | Portfolio construction, backtest, and figure generation |
+| `utils/risk_utils.py` | Stress test, Monte Carlo, and stress figure generation |
+| `outputs/tables/` | All pipeline-generated CSV tables |
+| `outputs/figures/` | All pipeline-generated PNG figures |
+| `notebooks/capstone_report.ipynb` | Report notebook (displays figures and tables inline) |
+| `.streamlit/config.toml` | Dark mode config — do not delete |
 
-This is intentional. The goal of the course is **not** to spend your time rebuilding easy plumbing from zero.
+---
 
-## What you must build or modify
+## Project Summary
 
-You still need to do the real capstone work.
+**Decision date:** January 1, 2020  
+**OOS evaluation:** 2020–2025 (6 years)  
+**Benchmark:** SPY
 
-At minimum, your team must:
-- research and justify **5–10 candidate stocks**
-- decide which inherited holdings to **keep, drop, or replace**
-- define the **revised 10-stock universe**
-- set and defend **target weights**
-- choose and justify an **active-management rule**
-- validate the starter outputs instead of accepting them blindly
-- improve or customize charts, tables, and dashboard pages where needed
-- interpret factor / regression results in finance language
-- interpret scenario / stress results in finance language
-- write the formal report
-- build the presentation deck
-- defend the final recommendation clearly
+**Revised 10-stock portfolio** (replaced the inherited fund):
 
-### Important principle
-This starter pack gives you a strong base, but it is **not** your final project unless you make it your own.
+| Ticker | Company | Weight | Decision |
+|--------|---------|--------|---------|
+| AAPL | Apple Inc. | 15% | Kept |
+| AMZN | Amazon.com | 15% | Kept |
+| CMCSA | Comcast | 10% | Kept |
+| GOOG | Alphabet | 10% | Kept |
+| MSFT | Microsoft | 10% | Kept |
+| V | Visa | 8% | Added |
+| WMT | Walmart | 8% | Added |
+| CVX | Chevron | 8% | Added |
+| NEE | NextEra Energy | 8% | Added |
+| UNH | UnitedHealth | 8% | Added |
 
-Leaving the starter logic untouched and simply rerunning it is **not enough**.
+**OOS results:**
 
-## Suggested student build order
+| Portfolio | Ann. Return | Sharpe | Sortino | Max Drawdown |
+|-----------|-------------|--------|---------|--------------|
+| Legacy Fund | 18.5% | 0.759 | 1.002 | -31.4% |
+| Revised Active | 16.9% | **0.793** | **1.004** | -27.8% |
+| Revised Static | 16.8% | 0.769 | 0.982 | -27.4% |
+| SPY | 14.9% | 0.716 | 0.880 | -33.7% |
 
-Use this order to avoid chaos:
+**Active rebalancing rule:** Sharpe-tilt (monthly). Trailing 36-month Sharpe signal scales target weights toward higher risk-adjusted momentum names. This is labeled `sharpe_tilt` in the rebalance log — NOT a quadratic max-Sharpe optimizer.
 
-1. confirm the workbook is readable
-2. run `python run_pipeline.py`
-3. open the dashboard
-4. review the inherited fund layer
-5. fill in candidate research
-6. finalize the revised 10-stock fund
-7. test and refine the active rule
-8. interpret factor and scenario outputs
-9. improve the dashboard and workbook summaries
-10. complete the notebook, report, and slide deck
+---
 
-For the full step-by-step plan by checkpoint, open:
+## Important Notes for Teammates
 
-`MILESTONE_BUILD_GUIDE.md`
-
-## Main exported tables
-
-You will usually see files like:
-- `tbl_inputs.csv`
-- `tbl_constraints.csv`
-- `tbl_inherited_fund.csv`
-- `tbl_candidates.csv`
-- `tbl_portfolio_summary.csv`
-- `tbl_performance_summary.csv`
-- `tbl_price_quality_summary.csv`
-- `tbl_legacy_fund_daily.csv`
-- `tbl_candidate_screen.csv`
-- `tbl_revised_static_daily.csv`
-- `tbl_revised_active_daily.csv`
-- `tbl_factor_capm_summary.csv`
-- `tbl_scenario_monte_carlo_summary.csv`
-- `tbl_project_manifest.csv`
-
-## Main exported figures
-
-You will usually see files like:
-- `fig_inherited_fund_overview.png`
-- `fig_inherited_drawdown.png`
-- `fig_inherited_weights_snapshot.png`
-- `fig_candidate_risk_return.png`
-- `fig_candidate_recent_return.png`
-- `fig_revised_static_weights.png`
-- `fig_factor_alpha_beta.png`
-- `fig_factor_rolling_beta.png`
-- `fig_scenario_monte_carlo_distribution.png`
-- `fig_scenario_stress_impacts.png`
-
-## Common problems and fixes
-
-### Problem: `ModuleNotFoundError`
-Cause:
-- wrong interpreter / wrong environment
-
-Fix:
-- activate the course `.venv`
-- verify the interpreter path
-- reinstall missing packages inside that environment
-
-### Problem: workbook not found
-Cause:
-- you ran `python run_pipeline.py` from the wrong folder
-
-Fix:
-- change into the starter-pack folder first
-- or pass a workbook path explicitly:
-```bash
-python run_pipeline.py --workbook fund_manager_control.xlsx
-```
-
-### Problem: `BRK.B` vs `BRK-B`
-Cause:
-- different platforms use different ticker naming
-
-Fix:
-- use `download_ticker` for API calls
-- use `legacy_ticker` / display ticker for human-readable output
-
-### Problem: revised static fund is “pending”
-Most common causes:
-- not exactly 10 selected final names
-- blank or invalid target weights
-- selected tickers do not have enough price history
-
-### Problem: Streamlit launches but looks sparse
-That usually means:
-- the pipeline ran, but key workbook selections are still incomplete
-- or the team has not yet customized the revised portfolio logic and interpretation
-
-## AI / vibe-coding rules for this project
-
-Use AI as a helper, not a replacement.
-
-Good use:
-- ask for one function at a time
-- debug one error at a time
-- verify every output with tables, plots, and saved files
-
-Bad use:
-- generate the entire project in one shot
-- submit code you cannot explain
-- trust outputs you did not check
-
-## Milestone alignment
-
-- **Milestone 1** — inherited fund reconstruction, project shell, dashboard wireframe
-- **Milestone 2** — candidate analysis, revised static logic, first backtest
-- **Milestone 3** — active layer, factor/scenario sections, final dashboard, report, and deck
-
-Open `MILESTONE_BUILD_GUIDE.md` for the detailed build plan.
-
-## Final student deliverables
-
-The capstone requires:
-- dashboard app
-- Excel control workbook
-- Python pipeline files
-- utility modules
-- one notebook that runs top-to-bottom
-- saved figures
-- saved tables
-- `README.md`
-- formal written report
-- presentation deck
-
-## Practical note for students
-
-The easiest way to fall behind is to treat the starter pack like a black box.
-
-The easiest way to succeed is to:
-- run it early
-- change one thing at a time
-- verify each new result
-- keep notes on decisions and assumptions
-- translate output into finance reasoning
+- **Do not change the venv.** The Desktop venv is iCloud-synced and will hang. Always use `~/bfin_capstone_venv`.
+- **Do not delete `data/ff3_factors_daily.csv` or `data/fred_usrec.csv`.** These are downloaded reference datasets used by the pipeline and figure scripts. Re-downloading requires internet access.
+- **The dashboard uses dark mode** set in `.streamlit/config.toml`. Do not remove or modify that file.
+- **The active rule is Sharpe-tilt**, not equal-weight or max-Sharpe optimizer. The control workbook says `optimizer / max_sharpe` but the actual implementation is a proportional tilt. Use "Sharpe-tilt" in all presentation and report language.
+- **FF3 alpha is NOT statistically significant** (t-stats ~0.5–0.8). This is expected and normal for a 6-year sample. The point estimates are positive for all three portfolios — present them as directional evidence, not proof of skill.
